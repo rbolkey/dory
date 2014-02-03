@@ -18,7 +18,7 @@
                     :match-index {} }
                    ;; submap that represents the state of the log
                    {:log {
-                          ;; log entries; applied to state machine
+                          ;; log entries; applied to state machine. This will likely need to be pluggable in the future
                           :entries []
                           ;; fn called to apply entries to the state machine
                           :apply-fn nil
@@ -30,19 +30,23 @@
                    (apply hash-map r) )]
     svr))
 
-;; loops through the unapplied committed entries and calls the log's :apply-fn 
-;; returns the index of the last applied log entry
-(defn apply-log-entries [svr]
+;; loops through the entries, calling the given function for each until the function fails, returns the number
+;; of successful calls to f
+(defn apply-log-entries* [entries f] 
+  (letfn [(apply-log-entry [entries applied]
+            (let [entry (first entries)]
+              (if (and f entry (f entry))
+                (recur (rest entries) (inc applied))
+                applied)))]
+    (apply-log-entry entries 0)))
+
+;; destructures the svr in order to apply log entries to the state machine, and updates the last-applied value
+(defn apply-log-entries 
+  [svr]
   (let [log (:log @svr)
         last-applied (:last-applied log)
         unapplied-committed-entries (drop last-applied (take (:commit-index log) (:entries log)))
-        apply-fn (:apply-fn log)]
-    (letfn [(apply-log-entry [entries cur]
-              (let [entry (first entries) 
-                    nxt (inc cur)]
-                (if (and apply-fn entry (apply-fn entry)) 
-                  (do 
-                    (swap! svr update-in [:log :last-applied] (fn [oldval] nxt))
-                    (recur (rest entries nxt)))
-                  cur)))]
-      (apply-log-entry unapplied-committed-entries last-applied))))
+        apply-fn (:apply-fn log)
+        applied (apply-log-entries unapplied-committed-entries apply-fn)]
+    (swap! svr update-in [:log :last-applied] (fn [oldval] (+ last-applied applied)))))
+
