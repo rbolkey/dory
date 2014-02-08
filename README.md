@@ -1,5 +1,7 @@
 # dory
 
+[![Build Status](https://travis-ci.org/rbolkey/dory.png?branch=master)](https://travis-ci.org/rbolkey/dory)
+
 A Clojure library designed to ... well, that part is up to you.
 
 ## Usage
