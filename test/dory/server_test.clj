@@ -2,6 +2,15 @@
   (:require [clojure.test :refer :all]
             [dory.server :refer :all]))
 
+(def svr (make-server "test-server"))
+
+(deftest follower-timeout
+  (testing "follower becomes a candiate"
+    (is (= :candidate (:state (follower-handle-timeout svr))))))
+
+
+
+;; mock handler for logs that accepts two entries and fails on the 3rd
 (defn test-log-handler [i]
   ([true true false] i))
 
