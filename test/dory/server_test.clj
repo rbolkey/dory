@@ -4,11 +4,15 @@
 
 (def svr (make-server "test-server"))
 
-(deftest follower-timeout
-  (testing "follower becomes a candiate"
-    (is (= :candidate (:state (follower-handle-timeout svr))))))
+; (deftest follower-handle-timeout
+;   (testing "follower becomes a candiate"
+;     (is (= :candidate (:state (follower-handle-timeout svr))))))
 
-
+; (deftest follower-handle-request
+;   (testing "follower handles a heartbeat"
+;     ; (is ))
+;     )
+;   )
 
 ;; mock handler for logs that accepts two entries and fails on the 3rd
 (defn test-log-handler [i]
