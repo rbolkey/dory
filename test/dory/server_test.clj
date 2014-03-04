@@ -2,11 +2,11 @@
   (:require [clojure.test :refer :all]
             [dory.server :refer :all]))
 
-(def svr (make-server "test-server"))
+(def a-follower (make-server "test-server" :dory.server/role :follower))
 
-; (deftest follower-handle-timeout
-;   (testing "follower becomes a candiate"
-;     (is (= :candidate (:state (follower-handle-timeout svr))))))
+(deftest timeouts-should-be-handled
+  (testing "follower becomes a candiate"
+    (is (= :candidate (:dory.server/role (handle-timeout a-follower))))))
 
 ; (deftest follower-handle-request
 ;   (testing "follower handles a heartbeat"

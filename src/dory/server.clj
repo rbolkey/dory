@@ -80,6 +80,11 @@
 ;; returns a timeout channel based on the follower's election timeout
 (defn election-timeout [svr])
 
+(defmulti handle-timeout ::role)
+
+(defmethod handle-timeout :follower follower-timeout [svr]
+  (assoc svr ::role :candidate))
+
 (defn contains-log-entry? [svr index term] 
   false)
 (defn truncate-log-entries [svr index term]
@@ -135,7 +140,9 @@
 ; (defmethod handle-message [:candidate :stop-request] [svr msg])
 ; (defmethod handle-message [:leader :stop-request] [svr msg])
 
-(defn deep-merge [& vals]
+(defn deep-merge 
+  "Recursively merges maps. If vals are not maps, the last value wins."
+  [& vals]
   (if (every? map? vals)
     (apply merge-with deep-merge vals)
     (last vals)))
@@ -154,7 +161,7 @@
                                  ;; handle stop
                                  [st] ([v] (handle-message s v))
                                  ;; handle timeout
-                                 ;;[t] ([v] (handle-timeout s))
+                                 [t] ([v] (handle-timeout s))
                                  ;; handle message
                                  [ch] ([v] (handle-message s v))) )))))
 
