@@ -26,11 +26,6 @@
                     :leader-commit-index (get-in svr [:log :commit-index])}
                    (apply hash-map r)))
 
-;; returns true if the server contains a log entry with given term and index
-(defn contains-log-entry? [svr term index]
-  ; (some #() (take-while #() (reverse ))) 
-  false)
-
 (defn make-append-entries-response [svr & r]
   (merge {::message-name :append-entries-response
           ;; current term, for the leader to update itself
@@ -62,7 +57,7 @@
                     ;; channel for sending/receiving commands
                     :ch (chan 256)
                     ;; channel for stopping the server
-                    :stopped (chan) }
+                    :stopping-ch (chan) }
                    ;; submap that represents the state of the log
                    {:log {
                           ;; log entries; applied to state machine. This will likely need to be pluggable in the future
@@ -77,15 +72,27 @@
                    (apply hash-map r) )]
     svr))
 
-;; returns a timeout channel based on the follower's election timeout
-(defn election-timeout [svr])
+(defmulti message-timeout "Creates a timeout channel for message handling by role." ::role)
+(defmulti handle-timeout "Handles the message handling timeout by server role." ::role)
+(defmulti good-message? "Checks that the rpc message is meets preconditions." ::message-name)
+(defmulti handle-message "Handles an RPC message given the server's role and message's name." 
+  (fn [svr msg] (vector (svr ::role) (msg ::message-name))))
 
-(defmulti handle-timeout ::role)
+(defmethod message-timeout :follower follower-timeout [svr]
+  ; TODO parameterize the election timeout value
+  (timeout 1000))
 
-(defmethod handle-timeout :follower follower-timeout [svr]
+(defmethod handle-timeout :follower handle-follower-timeout [svr]
+  ; Promote the follower to candidate
   (assoc svr ::role :candidate))
 
-(defn contains-log-entry? [svr index term] 
+(defn contains-log-entry? 
+  "Returns true if the server contains a log entry with the given term and index."
+  [svr index term]
+  ; TODO test and make map into vector of pairs
+  (some #(and (== index (:index %) (== term (:term %))))
+        (take-while #(and (<= index (:index %) (:term %)))
+                    (reverse (get-in svr [:log :entries]))))
   false)
 (defn truncate-log-entries [svr index term]
   svr)
@@ -93,19 +100,11 @@
   svr)
 (defn update-commit-index [svr commitIndex])
 
-(defmulti good-message? ::message-name)
-(defmethod good-message? :default [msg]
-  false)
-(defmethod good-message? :append-entries-request [msg]
+(defmethod good-message? :append-entries-request good-append-entries-request? [msg]
   (and (:term msg) (:leader msg)))
 
-;; multimethod to route messages based on server state and message type
-(defmulti handle-message (fn [svr msg] (vector (svr ::role) (msg ::message-name))))
-
-(defmethod handle-message :default [svr msg]
-  (vector svr nil))
-
-(defmethod handle-message [:follower :append-entries-request] [svr msg]
+(defmethod handle-message [:follower :append-entries-request] follower-append-entries-request  
+  [svr msg]
   {:pre [(good-message? msg)]}
   (let [curTerm (:current-term svr)
         reqTerm (:term msg)
@@ -124,12 +123,9 @@
                   (update-commit-index svr reqCommitIndex)) 
               make-append-entries-response :success true))))
 
-(defmethod handle-message [:candidate :append-entries-request] [svr msg])
-
-(defmethod handle-message [:leader :append-entries-request] [svr msg])
-
-(defmethod handle-message [:leader :append-entries-response] [svr msg])
-
+; (defmethod handle-message [:candidate :append-entries-request] [svr msg])
+; (defmethod handle-message [:leader :append-entries-request] [svr msg])
+; (defmethod handle-message [:leader :append-entries-response] [svr msg])
 ; (defmethod handle-message [:follower :request-vote-request] [svr msg])
 ; (defmethod handle-message [:candidate :request-vote-request] [svr msg])
 ; (defmethod handle-message [:leader :request-vote-request] [svr msg])
@@ -147,23 +143,32 @@
     (apply merge-with deep-merge vals)
     (last vals)))
 
-(defn update-server! [svr-atom new-val]
+(defn update-server! 
+  "Updates the server state atom by merging in the server state in new-val."
+  [svr-atom new-val]
   (swap! svr-atom deep-merge new-val))
+
+;; returns a timeout channel based on the follower's election timeout
+(defn election-timeout 
+  "Returns a timeout channel for the server"
+  [svr])
 
 ;; loops through rpc messages sent to the server while updating the server's state
 (defn server-loop! [svr]
   (go-loop [svr svr]
-           (let [s @svr
-                 ch (:ch s)
-                 st (:stopped s)
-                 t (election-timeout s)]
-             (recur (update-server! svr (alt!
-                                 ;; handle stop
-                                 [st] ([v] (handle-message s v))
-                                 ;; handle timeout
-                                 [t] ([v] (handle-timeout s))
-                                 ;; handle message
-                                 [ch] ([v] (handle-message s v))) )))))
+           (if (= :stopped (::role @svr))
+             svr
+             (let [s @svr
+                   ch (:ch s)
+                   st (:stopping-ch s)
+                   t (message-timeout s)]
+               (recur (update-server! svr (alt!
+                                            ;; handle stop
+                                            [st] ([v] (handle-message s v))
+                                            ;; handle timeout
+                                            [t] ([v] (handle-timeout s))
+                                            ;; handle message
+                                            [ch] ([v] (handle-message s v)))))))))
 
 ;; loops through the entries, calling the given function for each until the function fails, returns the number
 ;; of successful calls to f
