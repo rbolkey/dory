@@ -89,16 +89,34 @@
 (defn contains-log-entry? 
   "Returns true if the server contains a log entry with the given term and index."
   [svr index term]
-  ; TODO test and make map into vector of pairs
-  (some #(and (== index (:index %) (== term (:term %))))
-        (take-while #(and (<= index (:index %) (:term %)))
-                    (reverse (get-in svr [:log :entries]))))
-  false)
+  (some #(and (== index (:index %)) (== term (:term %)))
+        (take-while #(and (<= index (:index %) (<= term (:term %))))
+                    (reverse (get-in svr [:log :entries])))))
+
 (defn truncate-log-entries [svr index term]
   svr)
-(defn append-log-entries [svr entries]
-  svr)
-(defn update-commit-index [svr commitIndex])
+
+(defn valid-append-entry? 
+  "Returns true if the entry is consistent with the last entry appended."
+  [entry prev-entry]
+   (or (not prev-entry) (and (>= (:term entry) (:term prev-entry))
+                             (> (:index entry) (:index prev-entry)))))
+
+(defn append-log-entries 
+  "Appends the new log entries to the server's logs."
+  [{{appended-entries :entries} :log :as svr} new-entries]
+  (let [entry (first new-entries)
+        last-entry (peek appended-entries)]
+    (if entry
+      (recur (assoc-in svr [:log :entries]
+                       (if (valid-append-entry? entry last-entry) 
+                         (conj appended-entries entry) 
+                         appended-entries))
+             (rest new-entries))
+      svr)))
+
+(defn update-commit-index [svr commitIndex]
+  (assoc-in svr [:log :commit-index] commitIndex))
 
 (defmethod good-message? :append-entries-request good-append-entries-request? [msg]
   (and (:term msg) (:leader msg)))
@@ -112,16 +130,17 @@
         prevIndex (:prev-log-index msg)
         prevTerm (:prev-log-term msg)
         reqCommitIndex (:leader-commit-index msg) ]
-    (if (or (< reqTerm curTerm) 
-            (contains-log-entry? svr prevIndex prevTerm))
-      (vector svr (make-append-entries-response svr))
-      (vector (-> svr
-                  (truncate-log-entries prevIndex prevTerm)
-                  (append-log-entries (:entries msg))
-                  (assoc :current-term reqTerm)
-                  (assoc :current-leader reqLeader)
-                  (update-commit-index svr reqCommitIndex)) 
-              make-append-entries-response :success true))))
+    (if (and (<= curTerm reqTerm) 
+             (contains-log-entry? svr prevIndex prevTerm))
+      ;; TODO reply true message
+      (-> svr
+          (truncate-log-entries prevIndex prevTerm)
+          (append-log-entries (:entries msg))
+          (assoc :current-term reqTerm)
+          (assoc :current-leader reqLeader)
+          (update-commit-index svr reqCommitIndex))
+      ;; TODO reply false message
+      svr)))
 
 ; (defmethod handle-message [:candidate :append-entries-request] [svr msg])
 ; (defmethod handle-message [:leader :append-entries-request] [svr msg])
@@ -147,11 +166,6 @@
   "Updates the server state atom by merging in the server state in new-val."
   [svr-atom new-val]
   (swap! svr-atom deep-merge new-val))
-
-;; returns a timeout channel based on the follower's election timeout
-(defn election-timeout 
-  "Returns a timeout channel for the server"
-  [svr])
 
 ;; loops through rpc messages sent to the server while updating the server's state
 (defn server-loop! [svr]
