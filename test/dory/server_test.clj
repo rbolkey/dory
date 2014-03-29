@@ -8,12 +8,6 @@
   (testing "follower becomes a candiate"
     (is (= :candidate (:dory.server/role (handle-timeout a-follower))))))
 
-; (deftest follower-handle-request
-;   (testing "follower handles a heartbeat"
-;     ; (is ))
-;     )
-;   )
-
 ;; mock handler for logs that accepts two entries and fails on the 3rd
 (defn test-log-handler [i]
   ([true true false] i))
@@ -24,5 +18,4 @@
     (is (= 2 (apply-log-entries* [0 1 2] test-log-handler))))
   (testing "applying with missing arguments"
     (is (= 0 (apply-log-entries* [1 2 3] nil)))
-    (is (= 0 (apply-log-entries* nil test-log-handler))))
-  )
+    (is (= 0 (apply-log-entries* nil test-log-handler)))))

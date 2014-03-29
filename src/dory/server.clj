@@ -72,11 +72,18 @@
                    (apply hash-map r) )]
     svr))
 
+(defn role-transitions
+  "Defines map of server role transition functions. Not sure if useful yet."
+  {:stopped {}
+   :follower {}
+   :candidate {}
+   :leader {}})
+
 (defmulti message-timeout "Creates a timeout channel for message handling by role." ::role)
 (defmulti handle-timeout "Handles the message handling timeout by server role." ::role)
 (defmulti good-message? "Checks that the rpc message is meets preconditions." ::message-name)
 (defmulti handle-message "Handles an RPC message given the server's role and message's name." 
-  (fn [svr msg] (vector (svr ::role) (msg ::message-name))))
+  (fn [msg svr] (vector (msg ::message-name) (svr ::role))))
 
 (defmethod message-timeout :follower follower-timeout [svr]
   ; TODO parameterize the election timeout value
@@ -121,8 +128,8 @@
 (defmethod good-message? :append-entries-request good-append-entries-request? [msg]
   (and (:term msg) (:leader msg)))
 
-(defmethod handle-message [:follower :append-entries-request] follower-append-entries-request  
-  [svr msg]
+(defmethod handle-message [:append-entries-request :follower] follower-append-entries-request  
+  [msg svr]
   {:pre [(good-message? msg)]}
   (let [curTerm (:current-term svr)
         reqTerm (:term msg)
@@ -142,18 +149,18 @@
       ;; TODO reply false message
       svr)))
 
-; (defmethod handle-message [:candidate :append-entries-request] [svr msg])
-; (defmethod handle-message [:leader :append-entries-request] [svr msg])
-; (defmethod handle-message [:leader :append-entries-response] [svr msg])
-; (defmethod handle-message [:follower :request-vote-request] [svr msg])
-; (defmethod handle-message [:candidate :request-vote-request] [svr msg])
-; (defmethod handle-message [:leader :request-vote-request] [svr msg])
-; (defmethod handle-message [:candidate :request-vote-response] [svr msg])
-; (defmethod handle-message [:follower :snapshot-request] [svr msg])
-; (defmethod handle-message [:follower :join-request] [svr msg])
-; (defmethod handle-message [:follower :stop-request] [svr msg])
-; (defmethod handle-message [:candidate :stop-request] [svr msg])
-; (defmethod handle-message [:leader :stop-request] [svr msg])
+; (defmethod handle-message [:append-entries-request :candidate] [msg svr])
+; (defmethod handle-message [:append-entries-request :leader] [msg svr])
+; (defmethod handle-message [:append-entries-response :leader] [msg svr])
+; (defmethod handle-message [:request-vote-request :follower] [msg svr])
+; (defmethod handle-message [:request-vote-request :candidate] [msg svr])
+; (defmethod handle-message [:request-vote-request :leader] [msg svr])
+; (defmethod handle-message [:request-vote-response :candidate] [msg svr])
+; (defmethod handle-message [:snapshot-request :follower] [msg svr])
+; (defmethod handle-message [:join-request :follower] [msg svr])
+; (defmethod handle-message [:stop-request :follower] [msg svr])
+; (defmethod handle-message [:stop-request :candidate] [msg svr])
+; (defmethod handle-message [:stop-request :leader] [msg svr])
 
 (defn deep-merge 
   "Recursively merges maps. If vals are not maps, the last value wins."
@@ -167,22 +174,38 @@
   [svr-atom new-val]
   (swap! svr-atom deep-merge new-val))
 
+(defn throw-err [e]
+  (when (instance? Throwable e) (throw e))
+  e)
+
+(defmacro <? [ch]
+  `(throw-err (/<! ~ch)))
+
 ;; loops through rpc messages sent to the server while updating the server's state
 (defn server-loop! [svr]
-  (go-loop [svr svr]
-           (if (= :stopped (::role @svr))
-             svr
-             (let [s @svr
-                   ch (:ch s)
-                   st (:stopping-ch s)
-                   t (message-timeout s)]
-               (recur (update-server! svr (alt!
-                                            ;; handle stop
-                                            [st] ([v] (handle-message s v))
-                                            ;; handle timeout
-                                            [t] ([v] (handle-timeout s))
-                                            ;; handle message
-                                            [ch] ([v] (handle-message s v)))))))))
+  (go-loop [s @svr]
+           (let [ch (:ch s)
+                 st (:stopping-ch s)
+                 t (message-timeout s)]
+             (if (= :stopped (::role s))
+               svr    
+               ;; TODO handle exceptions lost in go block 
+               (recur (alt!
+                        ;; handle stop
+                        [st] ([v] (->> s
+                                       (handle-message v)
+                                       (update-server! svr)
+                                       deref))
+                        ;; handle timeout
+                        [t] ([v] (handle-timeout s))
+                        ;; handle message
+                        [ch st] ([v] (let [])
+                                 (->> s
+                                          (handle-message v)
+                                          (update-server! svr)
+                                          deref
+                                          (make-response v)
+                                          ))))))))
 
 ;; loops through the entries, calling the given function for each until the function fails, returns the number
 ;; of successful calls to f
